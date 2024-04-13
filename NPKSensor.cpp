@@ -12,6 +12,26 @@ namespace{
       interp->soilPhosphorus = (int16_t)((res->reg6DataHigh << 8) | res->reg6DataLow);
       interp->soilPotassiumContent = (int16_t)((res->reg7DataHigh << 8) | res->reg7DataLow);
   } 
+
+  String getRatios(const uint16_t& n, const uint16_t& p, const uint16_t& k) {
+      // Find the smallest value among n, p, and k
+      float smallest = min(min(n, p), k);
+      
+      // Calculate ratios based on the smallest value
+      float ratio_n = (float)n / smallest;
+      float ratio_p = (float)p / smallest;
+      float ratio_k = (float)k / smallest;
+  
+      // Round the ratios to the nearest integers
+      uint8_t rounded_n = round(ratio_n);
+      uint8_t rounded_p = round(ratio_p);
+      uint8_t rounded_k = round(ratio_k);
+  
+      // Create the ratio string
+      String ratioString = String(rounded_n) + ":" + String(rounded_p) + ":" + String(rounded_k);
+  
+      return ratioString;
+  }
 }
 
 NPKSensor::NPKSensor(const uint8_t& address, const uint8_t& pinRx, const uint8_t& pinTx) : pinRx(pinRx), pinTx(pinTx){
@@ -74,5 +94,6 @@ String NPKSensor::toList(const npk_data_t& npkData) {
     str += "Nitrogen(N): " + String(npkData.soilNitrogenContent) + "mg/kg\n";
     str += "Phosphorus(P): " + String(npkData.soilPhosphorus) + "mg/kg\n";
     str += "Potassium(K): " + String(npkData.soilPotassiumContent) + "mg/kg\n";
+    str += "NPK Ratios: " + getRatios(npkData.soilNitrogenContent, npkData.soilPhosphorus, npkData.soilPotassiumContent);
     return str;
 }
