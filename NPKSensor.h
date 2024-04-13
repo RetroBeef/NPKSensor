@@ -61,4 +61,5 @@ class NPKSensor {
     virtual ~NPKSensor() {}
     int8_t update(npk_data_t& npkData);
     String toJSON(const npk_data_t& npkData);
+    String toList(const npk_data_t& npkData);
 };

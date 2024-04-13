@@ -37,11 +37,16 @@ void handleNewMessages(int numNewMessages) {
     if (text == "/start") {
       String welcome = "Welcome, " + from_name + ".\n";
       welcome += "You can use the following commands\n\n";
-      welcome += "/state to get latest data as JSON \n";
+      welcome += "/state to get latest data as list \n";
+      welcome += "/json to get latest data as JSON \n";
       bot.sendMessage(chat_id, welcome, "");
     }
     
     if (text == "/state") {
+      bot.sendMessage(chat_id, npkSensor->toList(lastNpkData), "");
+    }
+
+    if (text == "/json") {
       bot.sendMessage(chat_id, npkSensor->toJSON(lastNpkData), "");
     }
   }
