@@ -70,7 +70,7 @@ String NPKSensor::toList(const npk_data_t& npkData) {
     str += "Humidity: " + String(npkData.soilMoisture, 1) + "%rH\n";
     str += "Salinity: " + String(npkData.soilSalinity) + "µS/cm\n";
     str += "Electrical Conductivity: " + String(npkData.soilConductivity) + "µS/cm\n";
-    str += "pH: " + String(npkData.pH, 1) + "-log(H+)\n";
+    str += "pH: " + String(npkData.pH, 1) + " -log(H+)\n";
     str += "Nitrogen(N): " + String(npkData.soilNitrogenContent) + "mg/kg\n";
     str += "Phosphorus(P): " + String(npkData.soilPhosphorus) + "mg/kg\n";
     str += "Potassium(K): " + String(npkData.soilPotassiumContent) + "mg/kg\n";
