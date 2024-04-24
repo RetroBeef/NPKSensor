@@ -15,6 +15,8 @@ unsigned long lastTimeBotRan;
 const uint8_t rxPin = 5;
 const uint8_t txPin = 6;
 
+sensor_t sensorType = SENSORTYPE7;
+
 NPKSensor* npkSensor = 0;
 npk_data_t npkTestWarn = {6,6,1200,1500,2.5f,100,100,160};
 npk_data_t lastNpkDefaultCalibrated = {20,20,3200,2500,5.5f,270,200,360};
@@ -51,7 +53,7 @@ void checkForDifferences(const npk_data_t *data1, const npk_data_t *data2, unsig
         lastHourlyMessageTimeSoilMoisture = currentTime;
     }
 
-    if (currentTime - lastHourlyMessageTimeSoilSalinity >= hourlyMessageInterval) {
+    if (currentTime - lastHourlyMessageTimeSoilSalinity >= hourlyMessageInterval && sensorType >= SENSORTYPE8) {
         if (fabs(data1->soilSalinity - data2->soilSalinity) / data1->soilSalinity > 0.3) {
             bot.sendMessage(CHAT_ID, "WARNING: >30% difference in salinity!","");
         }
@@ -167,10 +169,7 @@ void calib() {
 
 void setup() {
   Serial.begin(115200);
-
-  Serial.begin(115200);
-  npkSensor = new NPKSensor(1, rxPin, txPin);
-
+  npkSensor = new NPKSensor(1, rxPin, txPin, sensorType);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   client.setCACert(TELEGRAM_CERTIFICATE_ROOT);
@@ -179,6 +178,7 @@ void setup() {
     delay(1000);
     Serial.println("Connecting to WiFi..");
   }
+  npkSensor->update(lastNpkData);
 }
 
 void loop() {
@@ -187,7 +187,7 @@ void loop() {
       memcpy(&lastCalibData, &lastNpkData, sizeof(npk_data_t));
       calib();
       Serial.println(npkSensor->toJSON(lastNpkData));
-      Serial.println(npkSensor->toJSON(lastCalibData));
+      //Serial.println(npkSensor->toJSON(lastCalibData));
       checkForDifferences(&lastCalibData, &lastNpkDefaultCalibrated);
     }
 
