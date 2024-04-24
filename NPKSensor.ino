@@ -12,23 +12,99 @@ UniversalTelegramBot bot(BOTtoken, client);
 int botRequestDelay = 1000;
 unsigned long lastTimeBotRan;
 
-const uint8_t rxPin = 23;
-const uint8_t txPin = 19;
+const uint8_t rxPin = 5;
+const uint8_t txPin = 6;
 
 NPKSensor* npkSensor = 0;
+npk_data_t npkTestWarn = {6,6,1200,1500,2.5f,100,100,160};
+npk_data_t lastNpkDefaultCalibrated = {20,20,3200,2500,5.5f,270,200,360};
 npk_data_t lastNpkData;
+npk_data_t lastCalibData;
+
+// Variables for tracking last message time for each value
+unsigned long lastHourlyMessageTimeSoilTemperature = 0;
+unsigned long lastHourlyMessageTimeSoilMoisture = 0;
+unsigned long lastHourlyMessageTimeSoilSalinity = 0;
+unsigned long lastHourlyMessageTimeSoilConductivity = 0;
+unsigned long lastHourlyMessageTimePH = 0;
+unsigned long lastHourlyMessageTimeSoilNitrogenContent = 0;
+unsigned long lastHourlyMessageTimeSoilPhosphorus = 0;
+unsigned long lastHourlyMessageTimeSoilPotassiumContent = 0;
+const unsigned long hourlyMessageInterval = 3600000; // 1 hour in milliseconds
+
+void checkForDifferences(const npk_data_t *data1, const npk_data_t *data2, unsigned long lastCheckMs=0) {
+    // Get current time
+    unsigned long currentTime = lastCheckMs ? lastCheckMs : millis();
+
+    // Check if enough time has passed since the last message for each value
+    if (currentTime - lastHourlyMessageTimeSoilTemperature >= hourlyMessageInterval) {
+        if (fabs(data1->soilTemperature - data2->soilTemperature) / data1->soilTemperature > 0.3) {
+            bot.sendMessage(CHAT_ID, "WARNING: >30% Difference in soilTemperature!","");
+        }
+        lastHourlyMessageTimeSoilTemperature = currentTime;
+    }
+
+    if (currentTime - lastHourlyMessageTimeSoilMoisture >= hourlyMessageInterval) {
+        if (fabs(data1->soilMoisture - data2->soilMoisture) / data1->soilMoisture > 0.3) {
+            bot.sendMessage(CHAT_ID, "WARNING: >30% difference in moisture!","");
+        }
+        lastHourlyMessageTimeSoilMoisture = currentTime;
+    }
+
+    if (currentTime - lastHourlyMessageTimeSoilSalinity >= hourlyMessageInterval) {
+        if (fabs(data1->soilSalinity - data2->soilSalinity) / data1->soilSalinity > 0.3) {
+            bot.sendMessage(CHAT_ID, "WARNING: >30% difference in salinity!","");
+        }
+        lastHourlyMessageTimeSoilSalinity = currentTime;
+    }
+
+    if (currentTime - lastHourlyMessageTimeSoilConductivity >= hourlyMessageInterval) {
+        if (fabs(data1->soilConductivity - data2->soilConductivity) / data1->soilConductivity > 0.3) {
+            bot.sendMessage(CHAT_ID, "WARNING: >30% difference in conductivity!","");
+        }
+        lastHourlyMessageTimeSoilConductivity = currentTime;
+    }
+
+    if (currentTime - lastHourlyMessageTimePH >= hourlyMessageInterval) {
+        if (fabs(data1->pH - data2->pH) / data1->pH > 0.1) {
+            bot.sendMessage(CHAT_ID, "WARNING: >10% difference in pH!","");
+        }
+        lastHourlyMessageTimePH = currentTime;
+    }
+
+    if (currentTime - lastHourlyMessageTimeSoilNitrogenContent >= hourlyMessageInterval) {
+        if (fabs(data1->soilNitrogenContent - data2->soilNitrogenContent) / data1->soilNitrogenContent > 0.3) {
+            bot.sendMessage(CHAT_ID, "WARNING: >30% difference in Nitrogen!","");
+        }
+        lastHourlyMessageTimeSoilNitrogenContent = currentTime;
+    }
+
+    if (currentTime - lastHourlyMessageTimeSoilPhosphorus >= hourlyMessageInterval) {
+        if (fabs(data1->soilPhosphorus - data2->soilPhosphorus) / data1->soilPhosphorus > 0.3) {
+            bot.sendMessage(CHAT_ID, "WARNING: >30% difference in Phosphorus!","");
+        }
+        lastHourlyMessageTimeSoilPhosphorus = currentTime;
+    }
+
+    if (currentTime - lastHourlyMessageTimeSoilPotassiumContent >= hourlyMessageInterval) {
+        if (fabs(data1->soilPotassiumContent - data2->soilPotassiumContent) / data1->soilPotassiumContent > 0.3) {
+            bot.sendMessage(CHAT_ID, "WARNING: >30% difference in Potassium!","");
+        }
+        lastHourlyMessageTimeSoilPotassiumContent = currentTime;
+    }
+}
 
 void handleNewMessages(int numNewMessages) {
   Serial.println("handleNewMessages");
   Serial.println(String(numNewMessages));
 
-  for (int i=0; i<numNewMessages; i++) {
+  for (int i = 0; i < numNewMessages; i++) {
     String chat_id = String(bot.messages[i].chat_id);
-    if (chat_id != CHAT_ID){
+    if (chat_id != CHAT_ID) {
       bot.sendMessage(chat_id, "Unauthorized user", "");
       continue;
     }
-    
+
     String text = bot.messages[i].text;
     Serial.println(text);
 
@@ -37,11 +113,17 @@ void handleNewMessages(int numNewMessages) {
     if (text == "/start") {
       String welcome = "Welcome, " + from_name + ".\n";
       welcome += "You can use the following commands\n\n";
+      welcome += "/calib to get latest calibrated data as list \n";
       welcome += "/state to get latest data as list \n";
       welcome += "/json to get latest data as JSON \n";
+      welcome += "/testwarn to test the warning feature \n";
       bot.sendMessage(chat_id, welcome, "");
     }
-    
+
+    if (text == "/calib") {
+      bot.sendMessage(chat_id, npkSensor->toList(lastCalibData), "");
+    }
+
     if (text == "/state") {
       bot.sendMessage(chat_id, npkSensor->toList(lastNpkData), "");
     }
@@ -49,7 +131,38 @@ void handleNewMessages(int numNewMessages) {
     if (text == "/json") {
       bot.sendMessage(chat_id, npkSensor->toJSON(lastNpkData), "");
     }
+
+    if (text == "/testwarn") {
+      bot.sendMessage(chat_id, "initiated warning test procedure", "");
+      lastHourlyMessageTimeSoilTemperature = 0;
+      lastHourlyMessageTimeSoilMoisture = 0;
+      lastHourlyMessageTimeSoilSalinity = 0;
+      lastHourlyMessageTimeSoilConductivity = 0;
+      lastHourlyMessageTimePH = 0;
+      lastHourlyMessageTimeSoilNitrogenContent = 0;
+      lastHourlyMessageTimeSoilPhosphorus = 0;
+      lastHourlyMessageTimeSoilPotassiumContent = 0;
+      checkForDifferences(&npkTestWarn, &lastNpkDefaultCalibrated, hourlyMessageInterval + 1);
+    }
   }
+}
+
+void calib() {
+  lastCalibData.soilSalinity *= 10;
+  lastCalibData.soilConductivity *= 10;
+  lastCalibData.soilNitrogenContent *= 10;
+  lastCalibData.soilPhosphorus *= 10;
+  lastCalibData.soilPotassiumContent *= 10;
+
+  lastCalibData.soilPhosphorus /= 1.8f;
+  lastCalibData.soilPotassiumContent /= 2.528f;
+
+  lastCalibData.soilSalinity -= 1000;
+  lastCalibData.soilConductivity -= 1000;
+  lastCalibData.pH += 1;
+  lastCalibData.soilNitrogenContent += 40;
+  lastCalibData.soilPhosphorus += 30;
+  lastCalibData.soilPotassiumContent += 50;
 }
 
 void setup() {
@@ -57,11 +170,11 @@ void setup() {
 
   Serial.begin(115200);
   npkSensor = new NPKSensor(1, rxPin, txPin);
-  
+
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
   client.setCACert(TELEGRAM_CERTIFICATE_ROOT);
-  
+
   while (WiFi.status() != WL_CONNECTED) {
     delay(1000);
     Serial.println("Connecting to WiFi..");
@@ -70,13 +183,17 @@ void setup() {
 
 void loop() {
   if (millis() > lastTimeBotRan + botRequestDelay)  {
-    if(!npkSensor->update(lastNpkData)){
+    if (!npkSensor->update(lastNpkData)) {
+      memcpy(&lastCalibData, &lastNpkData, sizeof(npk_data_t));
+      calib();
       Serial.println(npkSensor->toJSON(lastNpkData));
+      Serial.println(npkSensor->toJSON(lastCalibData));
+      checkForDifferences(&lastCalibData, &lastNpkDefaultCalibrated);
     }
-    
+
     int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
 
-    while(numNewMessages) {
+    while (numNewMessages) {
       Serial.println("got response");
       handleNewMessages(numNewMessages);
       numNewMessages = bot.getUpdates(bot.last_message_received + 1);
