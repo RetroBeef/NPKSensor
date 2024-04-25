@@ -1,3 +1,5 @@
+#include <esp_task_wdt.h>
+
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <UniversalTelegramBot.h>
@@ -30,8 +32,7 @@ BLEAddress extTempHumid(externalTempHumidAddress);
 
 WiFiClientSecure client;
 UniversalTelegramBot bot(BOTtoken, client);
-
-SemaphoreHandle_t wifi_ble_mutex = NULL;
+uint32_t wifiLastSeen = 0;
 
 int botRequestDelay = 1000;
 unsigned long lastTimeBotRan;
@@ -49,6 +50,8 @@ npk_data_t lastCalibData;
 
 float lastAirTemperature = 0.f;
 uint8_t lastAirHumidity = 0;
+uint32_t lastSeenTempHumid = 0;
+uint32_t lastBleScan = 0;
 
 // Variables for tracking last message time for each value
 unsigned long lastHourlyMessageTimeSoilTemperature = 0;
@@ -68,6 +71,7 @@ class advertisedDeviceCallback: public BLEAdvertisedDeviceCallbacks {
           ble_temphumid_t* tempHumidData = (ble_temphumid_t*)(advertisedDevice.getPayload() + offsetInPayload);
           lastAirTemperature = tempHumidData->temperature / 10.f;
           lastAirHumidity = tempHumidData->humidity;
+          lastSeenTempHumid = millis();
         }
       }
     }
@@ -154,12 +158,12 @@ void handleNewMessages(int numNewMessages) {
     String from_name = bot.messages[i].from_name;
 
     if (text == "/calib") {
-      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + "% rH\n\nSoil:\n" +  npkSensor->toList(lastCalibData);
+      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + "% rH\nlast seen: " + String((millis() - lastSeenTempHumid) / 1000 / 60) + " min ago\n\nSoil:\n" +  npkSensor->toList(lastCalibData);
       bot.sendMessage(chat_id, msg, "");
     }
 
     if (text == "/state") {
-      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + "% rH\n\nSoil:\n" +  npkSensor->toList(lastNpkData);
+      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + "% rH\nlast seen: " + String((millis() - lastSeenTempHumid) / 1000 / 60) + " min ago\n\nSoil:\n" +  npkSensor->toList(lastNpkData);
       bot.sendMessage(chat_id, msg, "");
     }
 
@@ -188,7 +192,7 @@ void handleNewMessages(int numNewMessages) {
       welcome += "/json to get latest data as JSON \n";
       welcome += "/testwarn to test the warning feature \n";
       bot.sendMessage(chat_id, welcome, "");
-    }else{
+    } else {
       bot.sendMessage(chat_id, commands, "");
     }
   }
@@ -212,29 +216,8 @@ void calib() {
   lastCalibData.soilPotassiumContent += 50;
 }
 
-void ble_task(void *parameter) {
-  BLEDevice::init("");
-  pBLEScan = BLEDevice::getScan();
-  pBLEScan->setAdvertisedDeviceCallbacks(new advertisedDeviceCallback());
-  pBLEScan->setActiveScan(true);
-  pBLEScan->setInterval(40);
-  pBLEScan->setWindow(30);
-  while (1) {
-    if (xSemaphoreTake(wifi_ble_mutex, portMAX_DELAY) == pdTRUE) {
-      btStart();
-      BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
-      pBLEScan->clearResults();
-      BLEDevice::deinit(true);
-      btStop();
-      xSemaphoreGive(wifi_ble_mutex);
-      delay(10000);
-    }
-  }
-
-  vTaskDelete(NULL);
-}
-
 void setup() {
+  esp_task_wdt_init(480, false);
   Serial.begin(115200);
   npkSensor = new NPKSensor(1, rxPin, txPin, sensorType);
   WiFi.mode(WIFI_STA);
@@ -245,22 +228,25 @@ void setup() {
     delay(1000);
     Serial.println("Connecting to WiFi..");
   }
+  wifiLastSeen = millis();
 
-  wifi_ble_mutex = xSemaphoreCreateMutex();
-  
-  xTaskCreate(ble_task, "ble_task", 10240, NULL, 1, NULL);
+  BLEDevice::init("");
+  pBLEScan = BLEDevice::getScan();
+  pBLEScan->setAdvertisedDeviceCallbacks(new advertisedDeviceCallback());
+  pBLEScan->setActiveScan(true);
+  pBLEScan->setInterval(40);
+  pBLEScan->setWindow(30);
+
   npkSensor->update(lastNpkData);
 }
 
 void loop() {
   if (millis() > lastTimeBotRan + botRequestDelay)  {
-    if (xSemaphoreTake(wifi_ble_mutex, portMAX_DELAY) == pdTRUE) {
-      WiFi.mode(WIFI_STA);
-      WiFi.begin(ssid, password);
-      while (WiFi.status() != WL_CONNECTED) {
-        delay(1000);
-        Serial.println("Connecting to WiFi..");
-      }
+    if (millis() - wifiLastSeen > 5 * 1000 * 60) {
+      ESP.restart();
+    }
+    if (WiFi.status() == WL_CONNECTED) {
+      wifiLastSeen = millis();
       if (!npkSensor->update(lastNpkData)) {
         memcpy(&lastCalibData, &lastNpkData, sizeof(npk_data_t));
         calib();
@@ -268,17 +254,20 @@ void loop() {
         //Serial.println(npkSensor->toJSON(lastCalibData));
         checkForDifferences(&lastCalibData, &lastNpkDefaultCalibrated);
       }
-  
+
       int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
-  
+
       while (numNewMessages) {
         handleNewMessages(numNewMessages);
         numNewMessages = bot.getUpdates(bot.last_message_received + 1);
       }
       lastTimeBotRan = millis();
-      WiFi.disconnect();
-      WiFi.mode(WIFI_OFF);
-      xSemaphoreGive(wifi_ble_mutex); 
+    }else{
+      WiFi.begin(ssid, password);
     }
+  } else if (millis() - lastBleScan > 30000) {
+    BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
+    pBLEScan->clearResults();
+    lastBleScan = millis();
   }
 }
