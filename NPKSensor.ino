@@ -154,12 +154,12 @@ void handleNewMessages(int numNewMessages) {
     String from_name = bot.messages[i].from_name;
 
     if (text == "/calib") {
-      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + "°C\nHumidity" + String(lastAirHumidity) + "%rH\n\nSoil:\n" +  npkSensor->toList(lastCalibData);
+      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + " %rH\n\nSoil:\n" +  npkSensor->toList(lastCalibData);
       bot.sendMessage(chat_id, msg, "");
     }
 
     if (text == "/state") {
-      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + "°C\nHumidity" + String(lastAirHumidity) + "%rH\n\nSoil:\n" +  npkSensor->toList(lastNpkData);
+      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + " %rH\n\nSoil:\n" +  npkSensor->toList(lastNpkData);
       bot.sendMessage(chat_id, msg, "");
     }
 
@@ -221,14 +221,11 @@ void ble_task(void *parameter) {
   pBLEScan->setWindow(30);
   while (1) {
     if (xSemaphoreTake(wifi_ble_mutex, portMAX_DELAY) == pdTRUE) {
-      WiFi.mode(WIFI_OFF);
       btStart();
       BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
       pBLEScan->clearResults();
       BLEDevice::deinit(true);
       btStop();
-      WiFi.mode(WIFI_STA);
-      WiFi.begin(ssid, password);
       xSemaphoreGive(wifi_ble_mutex);
       delay(10000);
     }
@@ -258,6 +255,12 @@ void setup() {
 void loop() {
   if (millis() > lastTimeBotRan + botRequestDelay)  {
     if (xSemaphoreTake(wifi_ble_mutex, portMAX_DELAY) == pdTRUE) {
+      WiFi.mode(WIFI_STA);
+      WiFi.begin(ssid, password);
+      while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.println("Connecting to WiFi..");
+      }
       if (!npkSensor->update(lastNpkData)) {
         memcpy(&lastCalibData, &lastNpkData, sizeof(npk_data_t));
         calib();
@@ -273,6 +276,8 @@ void loop() {
         numNewMessages = bot.getUpdates(bot.last_message_received + 1);
       }
       lastTimeBotRan = millis();
+      WiFi.disconnect();
+      WiFi.mode(WIFI_OFF);
       xSemaphoreGive(wifi_ble_mutex); 
     }
   }
