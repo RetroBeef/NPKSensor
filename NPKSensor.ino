@@ -154,12 +154,12 @@ void handleNewMessages(int numNewMessages) {
     String from_name = bot.messages[i].from_name;
 
     if (text == "/calib") {
-      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + " %rH\n\nSoil:\n" +  npkSensor->toList(lastCalibData);
+      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + "% rH\n\nSoil:\n" +  npkSensor->toList(lastCalibData);
       bot.sendMessage(chat_id, msg, "");
     }
 
     if (text == "/state") {
-      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + " %rH\n\nSoil:\n" +  npkSensor->toList(lastNpkData);
+      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + "% rH\n\nSoil:\n" +  npkSensor->toList(lastNpkData);
       bot.sendMessage(chat_id, msg, "");
     }
 

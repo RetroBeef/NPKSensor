@@ -94,7 +94,7 @@ String NPKSensor::toJSON(const npk_data_t& npkData) {
     jsonStr += "\"fun\":" + String(npkRequest.function) + ",";
     jsonStr += "\"soil\":{";
     jsonStr += "\"temp\":{\"v\":" + String(npkData.soilTemperature, 1) + ",\"u\":\"°C\"},";
-    jsonStr += "\"hum\":{\"v\":" + String(npkData.soilMoisture, 1) + ",\"u\":\"%rH\"},";
+    jsonStr += "\"hum\":{\"v\":" + String(npkData.soilMoisture, 1) + ",\"u\":\"% rH\"},";
     if(type==SENSORTYPE8)jsonStr += "\"sal\":{\"v\":" + String(npkData.soilSalinity) + ",\"u\":\"µS/cm\"},";
     jsonStr += "\"EC\":{\"v\":" + String(npkData.soilConductivity) + ",\"u\":\"µS/cm\"},";
     jsonStr += "\"pH\":{\"v\":" + String(npkData.pH, 1) + ",\"u\":\"-log(H+)\"},";
@@ -109,7 +109,7 @@ String NPKSensor::toJSON(const npk_data_t& npkData) {
 String NPKSensor::toList(const npk_data_t& npkData) {
     String str = "";
     str += "Temperature: " + String(npkData.soilTemperature, 1) + " °C\n";
-    str += "Humidity: " + String(npkData.soilMoisture, 1) + " %rH\n";
+    str += "Humidity: " + String(npkData.soilMoisture, 1) + "% rH\n";
     if(type==SENSORTYPE8)str += "Salinity: " + String(npkData.soilSalinity) + " µS/cm\n";
     str += "Electrical Conductivity: " + String(npkData.soilConductivity) + " µS/cm\n";
     str += "pH: " + String(npkData.pH, 1) + " -log(H+)\n";
