@@ -107,7 +107,7 @@ String NPKSensor::toJSON(const npk_data_t& npkData) {
 }
 
 String NPKSensor::toList(const npk_data_t& npkData) {
-    String str = "";
+    String str = "Soil:\n";
     str += "Temperature: " + String(npkData.soilTemperature, 1) + " °C\n";
     str += "Humidity: " + String(npkData.soilMoisture, 1) + "% rH\n";
     if(type==SENSORTYPE8)str += "Salinity: " + String(npkData.soilSalinity) + " µS/cm\n";
@@ -116,6 +116,6 @@ String NPKSensor::toList(const npk_data_t& npkData) {
     str += "Nitrogen(N): " + String(npkData.soilNitrogenContent) + " mg/kg\n";
     str += "Phosphorus(P): " + String(npkData.soilPhosphorus) + " mg/kg\n";
     str += "Potassium(K): " + String(npkData.soilPotassiumContent) + " mg/kg\n";
-    str += "NPK Ratios: " + getRatios(npkData.soilNitrogenContent, npkData.soilPhosphorus, npkData.soilPotassiumContent);
+    str += "NPK Ratios: " + getRatios(npkData.soilNitrogenContent, npkData.soilPhosphorus, npkData.soilPotassiumContent) + "\n";
     return str;
 }

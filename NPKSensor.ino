@@ -2,6 +2,7 @@
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
+#define TELEGRAM_DEBUG 1
 #include <UniversalTelegramBot.h>
 #include <ArduinoJson.h>
 
@@ -10,25 +11,23 @@
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
 
+#include <TP357.h>
+#include <Aroma.h>
+
+#include <vector>
+
 #include "NPKSensor.h"
 #include "creds.h"
 
-#pragma pack(push,1)
-typedef struct {
-  uint8_t unk1;
-  uint8_t temperature;
-  uint8_t unk2;
-  uint8_t humidity;
-  uint8_t unk3;
-  uint8_t unk4;
-} ble_temphumid_t;
-#pragma pack(pop)
-const uint8_t offsetInPayload = 19;
-const uint8_t expectedPayloadSize = 39;
-
 uint8_t scanTime = 5;
-BLEScan* pBLEScan;
-BLEAddress extTempHumid(externalTempHumidAddress);
+BLEScan* pBLEScan = 0;
+BLEClient* bleClient = 0;
+Aroma* aroma = 0;
+
+std::vector<ScannableBleDevice*> scannableBleDevices;
+ThermoPro* tp = 0;
+
+std::vector<std::function<void()>> aromaActionQueue;
 
 WiFiClientSecure client;
 UniversalTelegramBot bot(BOTtoken, client);
@@ -37,21 +36,26 @@ uint32_t wifiLastSeen = 0;
 int botRequestDelay = 1000;
 unsigned long lastTimeBotRan;
 
-const uint8_t rxPin = 23;//5;
-const uint8_t txPin = 19;//6;
+const uint8_t rxPin = 5;//23;//5;
+const uint8_t txPin = 6;//19;//6;
 
 sensor_t sensorType = SENSORTYPE8;//SENSORTYPE7;
 
 NPKSensor* npkSensor = 0;
 npk_data_t npkTestWarn = {6, 6, 1200, 1500, 2.5f, 100, 100, 160};
-npk_data_t lastNpkDefaultCalibrated = {20, 20, 3200, 2500, 5.5f, 270, 200, 360};
+npk_data_t lastNpkDefaultCalibrated = {20, 20, 2200, 2100, 5.5f, 270, 200, 360};
 npk_data_t lastNpkData;
 npk_data_t lastCalibData;
 
-float lastAirTemperature = 0.f;
-uint8_t lastAirHumidity = 0;
-uint32_t lastSeenTempHumid = 0;
 uint32_t lastBleScan = 0;
+
+aroma_response_t lastFogResponse;
+aroma_response_t lastLedResponse;
+
+String aromaToList(){
+  aroma_rgb_t* rgb = (aroma_rgb_t*)lastLedResponse.data;
+  return "Humidifier:\nFog: " + String(lastFogResponse.state) + "\nLed: " + String(lastLedResponse.state) + " " + String(rgb->r) + " " + String(rgb->g) + " " + String(rgb->b); 
+}
 
 // Variables for tracking last message time for each value
 unsigned long lastHourlyMessageTimeSoilTemperature = 0;
@@ -64,15 +68,10 @@ unsigned long lastHourlyMessageTimeSoilPhosphorus = 0;
 unsigned long lastHourlyMessageTimeSoilPotassiumContent = 0;
 const unsigned long hourlyMessageInterval = 3600000; // 1 hour in milliseconds
 
-class advertisedDeviceCallback: public BLEAdvertisedDeviceCallbacks {
+class AdvertisedDeviceCallback: public BLEAdvertisedDeviceCallbacks {
     void onResult(BLEAdvertisedDevice advertisedDevice) {
-      if (advertisedDevice.getAddress() == extTempHumid) {
-        if (advertisedDevice.getPayloadLength() == expectedPayloadSize) {
-          ble_temphumid_t* tempHumidData = (ble_temphumid_t*)(advertisedDevice.getPayload() + offsetInPayload);
-          lastAirTemperature = tempHumidData->temperature / 10.f;
-          lastAirHumidity = tempHumidData->humidity;
-          lastSeenTempHumid = millis();
-        }
+      for(ScannableBleDevice* d : scannableBleDevices){
+        d->getScanCallback()(advertisedDevice);
       }
     }
 };
@@ -139,7 +138,7 @@ void checkForDifferences(const npk_data_t *data1, const npk_data_t *data2, unsig
   }
 }
 
-String commands = "commands: /start /calib /state /json /testwarn";
+String commands = "commands: /start /state /fog_on /fog_off /raw /json /testwarn";
 
 void handleNewMessages(int numNewMessages) {
   Serial.println("handleNewMessages");
@@ -157,13 +156,31 @@ void handleNewMessages(int numNewMessages) {
 
     String from_name = bot.messages[i].from_name;
 
-    if (text == "/calib") {
-      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + "% rH\nlast seen: " + String((millis() - lastSeenTempHumid) / 1000 / 60) + " min ago\n\nSoil:\n" +  npkSensor->toList(lastCalibData);
-      bot.sendMessage(chat_id, msg, "");
+    if (text == "/fog_on") {
+      aromaActionQueue.push_back([&aroma]{
+        aroma->enableFog(1);
+        aroma->enableLed(1);
+        aroma->setLedRgbValue(0, 255, 0);
+      });
+      bot.sendMessage(chat_id, "trying to turn on fog", "");
+    }
+
+    if (text == "/fog_off") {
+      aromaActionQueue.push_back([&aroma]{
+        aroma->enableFog(0);
+        aroma->enableLed(1);
+        aroma->setLedRgbValue(255, 0, 0);
+      });
+      bot.sendMessage(chat_id, "trying to turn off fog", "");
     }
 
     if (text == "/state") {
-      String msg = "Air:\nTemperature: " + String(lastAirTemperature, 2)  + " °C\nHumidity: " + String(lastAirHumidity) + "% rH\nlast seen: " + String((millis() - lastSeenTempHumid) / 1000 / 60) + " min ago\n\nSoil:\n" +  npkSensor->toList(lastNpkData);
+      String msg = tp->toList() + "\n" + npkSensor->toList(lastCalibData) + "\n" + aromaToList();
+      bot.sendMessage(chat_id, msg, "");
+    }
+
+    if (text == "/raw") {
+      String msg = npkSensor->toList(lastNpkData);
       bot.sendMessage(chat_id, msg, "");
     }
 
@@ -187,9 +204,11 @@ void handleNewMessages(int numNewMessages) {
     if (text == "/start") {
       String welcome = "Welcome, " + from_name + ".\n";
       welcome += "You can use the following commands\n\n";
-      welcome += "/calib to get latest calibrated data as list \n";
       welcome += "/state to get latest data as list \n";
-      welcome += "/json to get latest data as JSON \n";
+      welcome += "/fog_on to turn on humidifier \n";
+      welcome += "/fog_off to turn off humidifier \n";
+      welcome += "/raw to get latest soil raw data as list \n";
+      welcome += "/json to get latest soil raw data as JSON \n";
       welcome += "/testwarn to test the warning feature \n";
       bot.sendMessage(chat_id, welcome, "");
     } else {
@@ -228,14 +247,44 @@ void setup() {
     delay(1000);
     Serial.println("Connecting to WiFi..");
   }
+  Serial.println(WiFi.localIP());
   wifiLastSeen = millis();
 
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan();
-  pBLEScan->setAdvertisedDeviceCallbacks(new advertisedDeviceCallback());
+  tp = new ThermoPro(externalTempHumidAddress);
+  scannableBleDevices.push_back(tp);
+  pBLEScan->setAdvertisedDeviceCallbacks(new AdvertisedDeviceCallback());
   pBLEScan->setActiveScan(true);
   pBLEScan->setInterval(40);
   pBLEScan->setWindow(30);
+
+  bleClient = BLEDevice::createClient();
+
+  aroma = new Aroma(bleClient, externalHumidControlAddress, [](BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify){
+    aroma_response_t* response = (aroma_response_t*)pData;
+    switch (response->type) {
+      case stateFog: {
+          memcpy(&lastFogResponse, response, sizeof(aroma_response_t));
+          if (response->state) {
+            Serial.println("fog(on)");
+          } else {
+            Serial.println("fog(off)");
+          }
+        } break;
+      case stateLed: {
+          memcpy(&lastLedResponse, response, sizeof(aroma_response_t));
+          if (response->state) {
+            Serial.print("led(on), ");
+          } else {
+            Serial.print("led(off), ");          }
+          aroma_rgb_t* rgb = (aroma_rgb_t*)response->data;
+          Serial.printf("rgb(%u, %u, %u)", rgb->r, rgb->g, rgb->b);
+          Serial.println();
+        }
+    }
+  });
+  aroma->connectToDevice();
 
   npkSensor->update(lastNpkData);
 }
@@ -252,7 +301,7 @@ void loop() {
         calib();
         Serial.println(npkSensor->toJSON(lastNpkData));
         //Serial.println(npkSensor->toJSON(lastCalibData));
-        checkForDifferences(&lastCalibData, &lastNpkDefaultCalibrated);
+        //checkForDifferences(&lastCalibData, &lastNpkDefaultCalibrated);
       }
 
       int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
@@ -268,6 +317,18 @@ void loop() {
   } else if (millis() - lastBleScan > 30000) {
     BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
     pBLEScan->clearResults();
+    Serial.println(tp->toList());
     lastBleScan = millis();
+    if (!aroma->isConnected()) {
+      aroma->connectToDevice();
+    }
+    if(aroma->isConnected()){
+      for(std::function<void()> f : aromaActionQueue){
+        f();
+      }
+      aromaActionQueue.clear();
+      aroma->queryFogStatus();
+      aroma->queryLedStatus();
+    }
   }
 }
