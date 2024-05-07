@@ -2,7 +2,7 @@
 
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
-#define TELEGRAM_DEBUG 1
+#include <HTTPClient.h>
 #include <UniversalTelegramBot.h>
 #include <ArduinoJson.h>
 
@@ -24,6 +24,8 @@ BLEScan* pBLEScan = 0;
 BLEClient* bleClient = 0;
 Aroma* aroma = 0;
 
+char restToken[25];
+
 std::vector<ScannableBleDevice*> scannableBleDevices;
 ThermoPro* tp = 0;
 
@@ -42,103 +44,60 @@ const uint8_t txPin = 6;//19;//6;
 sensor_t sensorType = SENSORTYPE8;//SENSORTYPE7;
 
 NPKSensor* npkSensor = 0;
-npk_data_t npkTestWarn = {6, 6, 1200, 1500, 2.5f, 100, 100, 160};
-npk_data_t lastNpkDefaultCalibrated = {20, 20, 2200, 2100, 5.5f, 270, 200, 360};
 npk_data_t lastNpkData;
-npk_data_t lastCalibData;
 
 uint32_t lastBleScan = 0;
 
 aroma_response_t lastFogResponse;
 aroma_response_t lastLedResponse;
 
-String aromaToList(){
+String aromaToList() {
   aroma_rgb_t* rgb = (aroma_rgb_t*)lastLedResponse.data;
-  return "Humidifier:\nFog: " + String(lastFogResponse.state) + "\nLed: " + String(lastLedResponse.state) + " " + String(rgb->r) + " " + String(rgb->g) + " " + String(rgb->b); 
+  return "Humidifier:\nFog: " + String(lastFogResponse.state) + "\nLed: " + String(lastLedResponse.state) + " " + String(rgb->r) + " " + String(rgb->g) + " " + String(rgb->b);
 }
 
-// Variables for tracking last message time for each value
-unsigned long lastHourlyMessageTimeSoilTemperature = 0;
-unsigned long lastHourlyMessageTimeSoilMoisture = 0;
-unsigned long lastHourlyMessageTimeSoilSalinity = 0;
-unsigned long lastHourlyMessageTimeSoilConductivity = 0;
-unsigned long lastHourlyMessageTimePH = 0;
-unsigned long lastHourlyMessageTimeSoilNitrogenContent = 0;
-unsigned long lastHourlyMessageTimeSoilPhosphorus = 0;
-unsigned long lastHourlyMessageTimeSoilPotassiumContent = 0;
-const unsigned long hourlyMessageInterval = 3600000; // 1 hour in milliseconds
+String aromaToJSON() {
+  aroma_rgb_t* rgb = (aroma_rgb_t*)lastLedResponse.data;
+  return "{\"aroma550\":{\"fog\":" +
+         String(lastFogResponse.state) +
+         ",\"led\":{\"state\":" +
+         String(lastLedResponse.state) +
+         ",\"color\":{\"r\":" + String(rgb->r) +
+         ",\"g\":" + String(rgb->g) +
+         ",\"b\":" + String(rgb->b) +
+         "}}}}";
+}
 
 class AdvertisedDeviceCallback: public BLEAdvertisedDeviceCallbacks {
     void onResult(BLEAdvertisedDevice advertisedDevice) {
-      for(ScannableBleDevice* d : scannableBleDevices){
+      for (ScannableBleDevice* d : scannableBleDevices) {
         d->getScanCallback()(advertisedDevice);
       }
     }
 };
 
-void checkForDifferences(const npk_data_t *data1, const npk_data_t *data2, unsigned long lastCheckMs = 0) {
-  // Get current time
-  unsigned long currentTime = lastCheckMs ? lastCheckMs : millis();
-
-  // Check if enough time has passed since the last message for each value
-  if (currentTime - lastHourlyMessageTimeSoilTemperature >= hourlyMessageInterval) {
-    if (fabs(data1->soilTemperature - data2->soilTemperature) / data1->soilTemperature > 0.3) {
-      bot.sendMessage(CHAT_ID, "WARNING: >30% Difference in soilTemperature!", "");
-    }
-    lastHourlyMessageTimeSoilTemperature = currentTime;
-  }
-
-  if (currentTime - lastHourlyMessageTimeSoilMoisture >= hourlyMessageInterval) {
-    if (fabs(data1->soilMoisture - data2->soilMoisture) / data1->soilMoisture > 0.3) {
-      bot.sendMessage(CHAT_ID, "WARNING: >30% difference in moisture!", "");
-    }
-    lastHourlyMessageTimeSoilMoisture = currentTime;
-  }
-
-  if (currentTime - lastHourlyMessageTimeSoilSalinity >= hourlyMessageInterval && sensorType >= SENSORTYPE8) {
-    if (fabs(data1->soilSalinity - data2->soilSalinity) / data1->soilSalinity > 0.3) {
-      bot.sendMessage(CHAT_ID, "WARNING: >30% difference in salinity!", "");
-    }
-    lastHourlyMessageTimeSoilSalinity = currentTime;
-  }
-
-  if (currentTime - lastHourlyMessageTimeSoilConductivity >= hourlyMessageInterval) {
-    if (fabs(data1->soilConductivity - data2->soilConductivity) / data1->soilConductivity > 0.3) {
-      bot.sendMessage(CHAT_ID, "WARNING: >30% difference in conductivity!", "");
-    }
-    lastHourlyMessageTimeSoilConductivity = currentTime;
-  }
-
-  if (currentTime - lastHourlyMessageTimePH >= hourlyMessageInterval) {
-    if (fabs(data1->pH - data2->pH) / data1->pH > 0.1) {
-      bot.sendMessage(CHAT_ID, "WARNING: >10% difference in pH!", "");
-    }
-    lastHourlyMessageTimePH = currentTime;
-  }
-
-  if (currentTime - lastHourlyMessageTimeSoilNitrogenContent >= hourlyMessageInterval) {
-    if (fabs(data1->soilNitrogenContent - data2->soilNitrogenContent) / data1->soilNitrogenContent > 0.3) {
-      bot.sendMessage(CHAT_ID, "WARNING: >30% difference in Nitrogen!", "");
-    }
-    lastHourlyMessageTimeSoilNitrogenContent = currentTime;
-  }
-
-  if (currentTime - lastHourlyMessageTimeSoilPhosphorus >= hourlyMessageInterval) {
-    if (fabs(data1->soilPhosphorus - data2->soilPhosphorus) / data1->soilPhosphorus > 0.3) {
-      bot.sendMessage(CHAT_ID, "WARNING: >30% difference in Phosphorus!", "");
-    }
-    lastHourlyMessageTimeSoilPhosphorus = currentTime;
-  }
-
-  if (currentTime - lastHourlyMessageTimeSoilPotassiumContent >= hourlyMessageInterval) {
-    if (fabs(data1->soilPotassiumContent - data2->soilPotassiumContent) / data1->soilPotassiumContent > 0.3) {
-      bot.sendMessage(CHAT_ID, "WARNING: >30% difference in Potassium!", "");
-    }
-    lastHourlyMessageTimeSoilPotassiumContent = currentTime;
-  }
+String getSystemJSON() {
+  return "{\"air\":" + tp->toJSON() + ",\"soil\":" + npkSensor->toJSON(lastNpkData) + ",\"humidifier\":" + aromaToJSON() + "}";
 }
 
-String commands = "commands: /start /state /fog_on /fog_off /raw /json /testwarn";
+void pushToRestServer() {
+  HTTPClient http;
+  http.begin(restServerUrl);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("token", restToken);
+  int httpResponseCode = http.POST(getSystemJSON());
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.println(httpResponseCode);
+    Serial.println(response);
+  } else {
+    Serial.print("Error on sending POST: ");
+    Serial.println(httpResponseCode);
+  }
+  http.end();
+}
+
+String commands = "commands: /start /state /fog_on /fog_off /cam /json /push";
 
 void handleNewMessages(int numNewMessages) {
   Serial.println("handleNewMessages");
@@ -156,8 +115,12 @@ void handleNewMessages(int numNewMessages) {
 
     String from_name = bot.messages[i].from_name;
 
+    if (text == "/cam") {
+      continue;
+    }
+
     if (text == "/fog_on") {
-      aromaActionQueue.push_back([&aroma]{
+      aromaActionQueue.push_back([&aroma] {
         aroma->enableFog(1);
         aroma->enableLed(1);
         aroma->setLedRgbValue(0, 255, 0);
@@ -166,7 +129,7 @@ void handleNewMessages(int numNewMessages) {
     }
 
     if (text == "/fog_off") {
-      aromaActionQueue.push_back([&aroma]{
+      aromaActionQueue.push_back([&aroma] {
         aroma->enableFog(0);
         aroma->enableLed(1);
         aroma->setLedRgbValue(255, 0, 0);
@@ -175,30 +138,17 @@ void handleNewMessages(int numNewMessages) {
     }
 
     if (text == "/state") {
-      String msg = tp->toList() + "\n" + npkSensor->toList(lastCalibData) + "\n" + aromaToList();
-      bot.sendMessage(chat_id, msg, "");
-    }
-
-    if (text == "/raw") {
-      String msg = npkSensor->toList(lastNpkData);
+      String msg = tp->toList() + "\n" + npkSensor->toList(lastNpkData) + "\n" + aromaToList();
       bot.sendMessage(chat_id, msg, "");
     }
 
     if (text == "/json") {
-      bot.sendMessage(chat_id, npkSensor->toJSON(lastNpkData), "");
+      bot.sendMessage(chat_id, getSystemJSON(), "");
     }
 
-    if (text == "/testwarn") {
-      bot.sendMessage(chat_id, "initiated warning test procedure", "");
-      lastHourlyMessageTimeSoilTemperature = 0;
-      lastHourlyMessageTimeSoilMoisture = 0;
-      lastHourlyMessageTimeSoilSalinity = 0;
-      lastHourlyMessageTimeSoilConductivity = 0;
-      lastHourlyMessageTimePH = 0;
-      lastHourlyMessageTimeSoilNitrogenContent = 0;
-      lastHourlyMessageTimeSoilPhosphorus = 0;
-      lastHourlyMessageTimeSoilPotassiumContent = 0;
-      checkForDifferences(&npkTestWarn, &lastNpkDefaultCalibrated, hourlyMessageInterval + 1);
+    if (text == "/push") {
+      bot.sendMessage(chat_id, "pushing " + getSystemJSON() + " to " + String(restServerUrl), "");
+      pushToRestServer();
     }
 
     if (text == "/start") {
@@ -207,9 +157,9 @@ void handleNewMessages(int numNewMessages) {
       welcome += "/state to get latest data as list \n";
       welcome += "/fog_on to turn on humidifier \n";
       welcome += "/fog_off to turn off humidifier \n";
-      welcome += "/raw to get latest soil raw data as list \n";
-      welcome += "/json to get latest soil raw data as JSON \n";
-      welcome += "/testwarn to test the warning feature \n";
+      welcome += "/cam to get a picture \n";
+      welcome += "/json to get latest data as JSON \n";
+      welcome += "/push to push latest data to rest server \n";
       bot.sendMessage(chat_id, welcome, "");
     } else {
       bot.sendMessage(chat_id, commands, "");
@@ -217,30 +167,20 @@ void handleNewMessages(int numNewMessages) {
   }
 }
 
-void calib() {
-  lastCalibData.soilSalinity *= 10;
-  lastCalibData.soilConductivity *= 10;
-  lastCalibData.soilNitrogenContent *= 10;
-  lastCalibData.soilPhosphorus *= 10;
-  lastCalibData.soilPotassiumContent *= 10;
-
-  lastCalibData.soilPhosphorus /= 1.8f;
-  lastCalibData.soilPotassiumContent /= 2.528f;
-
-  lastCalibData.soilSalinity -= 1000;
-  lastCalibData.soilConductivity -= 1000;
-  lastCalibData.pH += 1;
-  lastCalibData.soilNitrogenContent += 40;
-  lastCalibData.soilPhosphorus += 30;
-  lastCalibData.soilPotassiumContent += 50;
-}
-
 void setup() {
   esp_task_wdt_init(480, false);
   Serial.begin(115200);
-  npkSensor = new NPKSensor(1, rxPin, txPin, sensorType);
+  WiFi.setAutoConnect(true);
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
+  uint8_t mac[6];
+  WiFi.macAddress(mac);
+  for (uint8_t i = 0; i < 6; i++) {
+    mac[i] ^= 0xBF;
+  }
+  sprintf(restToken, "%02x%02x%02x%02x%02x%02x\0", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+  Serial.printf("token for rest %s\r\n", restToken);
+
   client.setCACert(TELEGRAM_CERTIFICATE_ROOT);
 
   while (WiFi.status() != WL_CONNECTED) {
@@ -249,6 +189,8 @@ void setup() {
   }
   Serial.println(WiFi.localIP());
   wifiLastSeen = millis();
+
+  npkSensor = new NPKSensor(1, rxPin, txPin, sensorType);
 
   BLEDevice::init("");
   pBLEScan = BLEDevice::getScan();
@@ -261,7 +203,7 @@ void setup() {
 
   bleClient = BLEDevice::createClient();
 
-  aroma = new Aroma(bleClient, externalHumidControlAddress, [](BLERemoteCharacteristic *pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify){
+  aroma = new Aroma(bleClient, externalHumidControlAddress, [](BLERemoteCharacteristic * pBLERemoteCharacteristic, uint8_t *pData, size_t length, bool isNotify) {
     aroma_response_t* response = (aroma_response_t*)pData;
     switch (response->type) {
       case stateFog: {
@@ -277,7 +219,8 @@ void setup() {
           if (response->state) {
             Serial.print("led(on), ");
           } else {
-            Serial.print("led(off), ");          }
+            Serial.print("led(off), ");
+          }
           aroma_rgb_t* rgb = (aroma_rgb_t*)response->data;
           Serial.printf("rgb(%u, %u, %u)", rgb->r, rgb->g, rgb->b);
           Serial.println();
@@ -297,11 +240,7 @@ void loop() {
     if (WiFi.status() == WL_CONNECTED) {
       wifiLastSeen = millis();
       if (!npkSensor->update(lastNpkData)) {
-        memcpy(&lastCalibData, &lastNpkData, sizeof(npk_data_t));
-        calib();
         Serial.println(npkSensor->toJSON(lastNpkData));
-        //Serial.println(npkSensor->toJSON(lastCalibData));
-        //checkForDifferences(&lastCalibData, &lastNpkDefaultCalibrated);
       }
 
       int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
@@ -311,7 +250,7 @@ void loop() {
         numNewMessages = bot.getUpdates(bot.last_message_received + 1);
       }
       lastTimeBotRan = millis();
-    }else{
+    } else {
       WiFi.begin(ssid, password);
     }
   } else if (millis() - lastBleScan > 30000) {
@@ -322,13 +261,15 @@ void loop() {
     if (!aroma->isConnected()) {
       aroma->connectToDevice();
     }
-    if(aroma->isConnected()){
-      for(std::function<void()> f : aromaActionQueue){
+    if (aroma->isConnected()) {
+      for (std::function<void()> f : aromaActionQueue) {
         f();
       }
       aromaActionQueue.clear();
       aroma->queryFogStatus();
       aroma->queryLedStatus();
     }
+  }else if(millis() % 300000 == 0){
+    pushToRestServer();
   }
 }

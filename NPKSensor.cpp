@@ -5,12 +5,12 @@ namespace{
   void interpret_npk8_response(const npk8_response_t *res, npk_data_t *interp) {
       interp->soilTemperature = (int16_t)((res->reg0DataHigh << 8) | res->reg0DataLow) / 10.0;
       interp->soilMoisture = ((res->reg1DataHigh << 8) | res->reg1DataLow) / 10.0;
-      interp->soilSalinity = (int16_t)((res->reg2DataHigh << 8) | res->reg2DataLow);
-      interp->soilConductivity = (int16_t)((res->reg3DataHigh << 8) | res->reg3DataLow);
+      interp->soilSalinity = ((int16_t)((res->reg2DataHigh << 8) | res->reg2DataLow)) * 10;
+      interp->soilConductivity = ((int16_t)((res->reg3DataHigh << 8) | res->reg3DataLow)) * 10;
       interp->pH = (int16_t)((res->reg4DataHigh << 8) | res->reg4DataLow) / 100.0;
-      interp->soilNitrogenContent = (int16_t)((res->reg5DataHigh << 8) | res->reg5DataLow);
-      interp->soilPhosphorus = (int16_t)((res->reg6DataHigh << 8) | res->reg6DataLow);
-      interp->soilPotassiumContent = (int16_t)((res->reg7DataHigh << 8) | res->reg7DataLow);
+      interp->soilNitrogenContent = ((int16_t)((res->reg5DataHigh << 8) | res->reg5DataLow)) * 10;
+      interp->soilPhosphorus = ((int16_t)((res->reg6DataHigh << 8) | res->reg6DataLow)) * 10;
+      interp->soilPotassiumContent = ((int16_t)((res->reg7DataHigh << 8) | res->reg7DataLow)) * 10;
   } 
 
   void interpret_npk7_response(const npk7_response_t *res, npk_data_t *interp) {
@@ -92,7 +92,6 @@ String NPKSensor::toJSON(const npk_data_t& npkData) {
     String jsonStr = "{";
     jsonStr += "\"add\":" + String(npkRequest.address) + ",";
     jsonStr += "\"fun\":" + String(npkRequest.function) + ",";
-    jsonStr += "\"soil\":{";
     jsonStr += "\"temp\":{\"v\":" + String(npkData.soilTemperature, 1) + ",\"u\":\"°C\"},";
     jsonStr += "\"hum\":{\"v\":" + String(npkData.soilMoisture, 1) + ",\"u\":\"% rH\"},";
     if(type==SENSORTYPE8)jsonStr += "\"sal\":{\"v\":" + String(npkData.soilSalinity) + ",\"u\":\"µS/cm\"},";
@@ -101,7 +100,7 @@ String NPKSensor::toJSON(const npk_data_t& npkData) {
     jsonStr += "\"N\":{\"v\":" + String(npkData.soilNitrogenContent) + ",\"u\":\"mg/kg\"},";
     jsonStr += "\"P\":{\"v\":" + String(npkData.soilPhosphorus) + ",\"u\":\"mg/kg\"},";
     jsonStr += "\"K\":{\"v\":" + String(npkData.soilPotassiumContent) + ",\"u\":\"mg/kg\"}";
-    jsonStr += "}}";
+    jsonStr += "}";
 
     return jsonStr;
 }
