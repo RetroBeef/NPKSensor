@@ -19,6 +19,18 @@
 #include "NPKSensor.h"
 #include "creds.h"
 
+typedef struct {
+  String deviceName;
+  uint8_t state;
+  String dateString;
+  float power;
+  float factor;
+  float voltage;
+  float current;
+} TasmotaState_t;
+
+TasmotaState_t lastTasmotaState;
+
 uint8_t scanTime = 5;
 BLEScan* pBLEScan = 0;
 BLEClient* bleClient = 0;
@@ -51,6 +63,19 @@ uint32_t lastBleScan = 0;
 aroma_response_t lastFogResponse;
 aroma_response_t lastLedResponse;
 
+bool autoHumidityEnabled = false;
+uint8_t humidityOuterLimit = 10;
+uint8_t humidityInnerLimit = 5;
+uint8_t humidityTargetValue = 65;
+
+String tasmotaToList() {
+  return "Exhaustion:\nSwitch: " + String(lastTasmotaState.state) + "\nPower: " + String(lastTasmotaState.power, 2) + " W";
+}
+
+String tasmotaToJSON() {
+  return "{\"deviceName\":\"" + lastTasmotaState.deviceName + "\",\"state\":" + String(lastTasmotaState.state) + ",\"dateString\":\"" + lastTasmotaState.dateString + "\",\"power\":" + String(lastTasmotaState.power) + ",\"factor\":" + String(lastTasmotaState.factor) + ",\"voltage\":" + String(lastTasmotaState.voltage) + ",\"current\":" + String(lastTasmotaState.current) + "}";
+}
+
 String aromaToList() {
   aroma_rgb_t* rgb = (aroma_rgb_t*)lastLedResponse.data;
   return "Humidifier:\nFog: " + String(lastFogResponse.state) + "\nLed: " + String(lastLedResponse.state) + " " + String(rgb->r) + " " + String(rgb->g) + " " + String(rgb->b);
@@ -58,14 +83,14 @@ String aromaToList() {
 
 String aromaToJSON() {
   aroma_rgb_t* rgb = (aroma_rgb_t*)lastLedResponse.data;
-  return "{\"aroma550\":{\"fog\":" +
+  return "{\"fog\":" +
          String(lastFogResponse.state) +
          ",\"led\":{\"state\":" +
          String(lastLedResponse.state) +
          ",\"color\":{\"r\":" + String(rgb->r) +
          ",\"g\":" + String(rgb->g) +
          ",\"b\":" + String(rgb->b) +
-         "}}}}";
+         "}}}";
 }
 
 class AdvertisedDeviceCallback: public BLEAdvertisedDeviceCallbacks {
@@ -77,7 +102,7 @@ class AdvertisedDeviceCallback: public BLEAdvertisedDeviceCallbacks {
 };
 
 String getSystemJSON() {
-  return "{\"air\":" + tp->toJSON() + ",\"soil\":" + npkSensor->toJSON(lastNpkData) + ",\"humidifier\":" + aromaToJSON() + "}";
+  return "{\"air\":" + tp->toJSON() + ",\"soil\":" + npkSensor->toJSON(lastNpkData) + ",\"humidifier\":" + aromaToJSON() + ",\"exhaustion\":" + tasmotaToJSON() + ",\"autohum\":" + autoHumidityEnabled + "}";
 }
 
 void pushToRestServer() {
@@ -97,7 +122,107 @@ void pushToRestServer() {
   http.end();
 }
 
-String commands = "commands: /start /state /fog_on /fog_off /cam /json /push";
+void pushToTasmota(bool powerOn) {
+  HTTPClient http;
+  if (powerOn) {
+    http.begin(externalExhaustTasmotaUrlSwitchOn);
+  } else {
+    http.begin(externalExhaustTasmotaUrlSwitchOff);
+  }
+  int httpResponseCode = http.GET();
+  if (httpResponseCode > 0) {
+    String response = http.getString();
+    Serial.println(httpResponseCode);
+    Serial.println(response);
+  } else {
+    Serial.print("Error on sending GET: ");
+    Serial.println(httpResponseCode);
+  }
+  http.end();
+}
+
+void pullFromTasmota() {
+  HTTPClient httpDevice;
+  httpDevice.begin(externalExhaustTasmotaUrlStatusDevice);
+  int httpResponseCode = httpDevice.GET();
+  if (httpResponseCode > 0) {
+    JsonDocument docDevice;
+    DeserializationError error = deserializeJson(docDevice, httpDevice.getString());
+    if (error) {
+      Serial.print("deserializeJson() failed: ");
+      Serial.println(error.c_str());
+      return;
+    }
+    JsonObject status = docDevice["Status"];
+    lastTasmotaState.deviceName = (const char*)status["DeviceName"];
+    lastTasmotaState.state = status["Power"];
+  } else {
+    Serial.print("Error on sending GET: ");
+    Serial.println(httpResponseCode);
+  }
+  httpDevice.end();
+  HTTPClient httpSensor;
+  httpSensor.begin(externalExhaustTasmotaUrlStatusSensors);
+  httpResponseCode = httpSensor.GET();
+  if (httpResponseCode > 0) {
+    JsonDocument docSensor;
+    DeserializationError error = deserializeJson(docSensor, httpSensor.getString());
+    if (error) {
+      Serial.print("deserializeJson() failed: ");
+      Serial.println(error.c_str());
+      return;
+    }
+
+    JsonObject statusEnergy = docSensor["StatusSNS"]["ENERGY"];
+    lastTasmotaState.dateString = (const char*)docSensor["StatusSNS"]["Time"];
+    lastTasmotaState.power = statusEnergy["Power"];
+    lastTasmotaState.factor = statusEnergy["Factor"];
+    lastTasmotaState.voltage = statusEnergy["Voltage"];
+    lastTasmotaState.current = statusEnergy["Current"];
+  } else {
+    Serial.print("Error on sending GET: ");
+    Serial.println(httpResponseCode);
+  }
+  httpSensor.end();
+}
+
+void naiveControlLoop(const uint8_t& targetValue, const uint8_t& currentValue) {
+  if (currentValue >= targetValue + humidityOuterLimit) {
+    //ex on
+    if (!lastTasmotaState.state) {
+      pushToTasmota(true);
+      bot.sendMessage(CHAT_ID, "AUTO: turning on exhaustion", "");
+    }
+  } else if (currentValue >= targetValue + humidityInnerLimit) {
+    //fog off
+    if (lastFogResponse.state) {
+      aromaActionQueue.push_back([&aroma] {
+        aroma->enableFog(0);
+        aroma->enableLed(1);
+        aroma->setLedRgbValue(255, 0, 0);
+      });
+      bot.sendMessage(CHAT_ID, "AUTO: turning off fog", "");
+    }
+  } else if (currentValue <= targetValue - humidityInnerLimit) {
+    //fog on
+    if (!lastFogResponse.state) {
+      aromaActionQueue.push_back([&aroma] {
+        aroma->enableFog(1);
+        aroma->enableLed(1);
+        aroma->setLedRgbValue(0, 255, 0);
+      });
+      bot.sendMessage(CHAT_ID, "AUTO: turning on fog", "");
+    }
+  } else if (currentValue <= targetValue - humidityOuterLimit) {
+    //ex off
+    if (lastTasmotaState.state) {
+      pushToTasmota(false);
+      bot.sendMessage(CHAT_ID, "AUTO: turning off exhaustion", "");
+    }
+  }
+}
+
+String commands = "commands: /start /state /fog_on /fog_off /ex_on /ex_off /cam /json /push /auto_on /auto_off";
 
 void handleNewMessages(int numNewMessages) {
   Serial.println("handleNewMessages");
@@ -119,6 +244,26 @@ void handleNewMessages(int numNewMessages) {
       continue;
     }
 
+    if (text == "/auto_on") {
+      bot.sendMessage(chat_id, "turning on experimental auto humidity (65% target)", "");
+      autoHumidityEnabled = true;
+    }
+
+    if (text == "/auto_off") {
+      bot.sendMessage(chat_id, "turning off experimental auto humidity (65% target)", "");
+      autoHumidityEnabled = false;
+    }
+
+    if (text == "/ex_on") {
+      bot.sendMessage(chat_id, "trying to turn on exhaustion", "");
+      pushToTasmota(1);
+    }
+
+    if (text == "/ex_off") {
+      bot.sendMessage(chat_id, "trying to turn off exhaustion", "");
+      pushToTasmota(0);
+    }
+
     if (text == "/fog_on") {
       aromaActionQueue.push_back([&aroma] {
         aroma->enableFog(1);
@@ -138,7 +283,7 @@ void handleNewMessages(int numNewMessages) {
     }
 
     if (text == "/state") {
-      String msg = tp->toList() + "\n" + npkSensor->toList(lastNpkData) + "\n" + aromaToList();
+      String msg = tp->toList() + "\n" + npkSensor->toList(lastNpkData) + "\n" + aromaToList() + "\n\n" + tasmotaToList() + "\n\nauto humidity: " + String(autoHumidityEnabled);
       bot.sendMessage(chat_id, msg, "");
     }
 
@@ -157,9 +302,13 @@ void handleNewMessages(int numNewMessages) {
       welcome += "/state to get latest data as list \n";
       welcome += "/fog_on to turn on humidifier \n";
       welcome += "/fog_off to turn off humidifier \n";
+      welcome += "/ex_on to turn on exhaustion \n";
+      welcome += "/ex_off to turn off exhaustion \n";
       welcome += "/cam to get a picture \n";
       welcome += "/json to get latest data as JSON \n";
       welcome += "/push to push latest data to rest server \n";
+      welcome += "/auto_on to turn on experimental auto humidity \n";
+      welcome += "/auto_off to turn off experimental auto humidity \n";
       bot.sendMessage(chat_id, welcome, "");
     } else {
       bot.sendMessage(chat_id, commands, "");
@@ -230,6 +379,7 @@ void setup() {
   aroma->connectToDevice();
 
   npkSensor->update(lastNpkData);
+  Serial.flush();
 }
 
 void loop() {
@@ -249,6 +399,7 @@ void loop() {
         handleNewMessages(numNewMessages);
         numNewMessages = bot.getUpdates(bot.last_message_received + 1);
       }
+      pullFromTasmota();
       lastTimeBotRan = millis();
     } else {
       WiFi.begin(ssid, password);
@@ -256,7 +407,6 @@ void loop() {
   } else if (millis() - lastBleScan > 30000) {
     BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
     pBLEScan->clearResults();
-    Serial.println(tp->toList());
     lastBleScan = millis();
     if (!aroma->isConnected()) {
       aroma->connectToDevice();
@@ -269,7 +419,12 @@ void loop() {
       aroma->queryFogStatus();
       aroma->queryLedStatus();
     }
-  }else if(millis() % 300000 == 0){
+    if (autoHumidityEnabled) {
+      if (tp->getHumidity() > 1) {
+        naiveControlLoop(humidityTargetValue, tp->getHumidity());
+      }
+    }
+  } else if (millis() % 300000 == 0) {
     pushToRestServer();
   }
 }
