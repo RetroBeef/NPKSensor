@@ -1,15 +1,23 @@
 #pragma once
 
-const char* ssid = "REPLACE_WITH_YOUR_SSID";
-const char* password = "REPLACE_WITH_YOUR_PASSWORD";
+static const char* ssid = "REPLACE_WITH_YOUR_SSID";
+static const char* password = "REPLACE_WITH_YOUR_PASSWORD";
 
-const char* externalTempHumidAddress = "de:ee:ad:be:ee:ef";
-const char* externalHumidControlAddress = "de:ee:ad:be:ee:ef";
+static const char* externalTempHumidAddress = "de:ee:ad:be:ee:ef";
+static const char* externalHumidControlAddress = "de:ee:ad:be:ee:ef";
+static const char* externalLightAddress = "de:ee:ad:be:ee:ef";
+static const char* externalDistanceAddress = "de:ee:ad:be:ee:ef";
+static const char* externalWeightAddress = "de:ee:ad:be:ee:ef";
 
-static const char* externalExhaustTasmotaUrlStatusSensors = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Status%2010";
-static const char* externalExhaustTasmotaUrlStatusDevice = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Status";
-static const char* externalExhaustTasmotaUrlSwitchOn = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Power%20On";
-static const char* externalExhaustTasmotaUrlSwitchOff = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Power%20Off";
+static const char* externalTasmotaExhaustUrlStatusSensors = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Status%2010";
+static const char* externalTasmotaExhaustUrlStatusDevice = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Status";
+static const char* externalTasmotaExhaustUrlSwitchOn = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Power%20On";
+static const char* externalTasmotaExhaustUrlSwitchOff = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Power%20Off";
+
+static const char* externalTasmotaLightUrlStatusSensors = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Status%2010";
+static const char* externalTasmotaLightUrlStatusDevice = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Status";
+static const char* externalTasmotaLightUrlSwitchOn = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Power%20On";
+static const char* externalTasmotaLightUrlSwitchOff = "http://<IP>/cm?user=<USER>&password=<PASSWORD>&cmnd=Power%20Off";
 
 static const char* restServerUrl = "https://<URL>";
 
