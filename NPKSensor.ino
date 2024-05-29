@@ -79,7 +79,9 @@ std::vector<ScannableBleDevice*> scannableBleDevices;
 ThermoPro* tp = 0;
 
 std::vector<std::function<void()>> aromaActionQueue;
+std::vector<std::function<void()>> lightActionQueue;
 std::vector<std::function<void()>> distanceActionQueue;
+std::vector<std::function<void()>> weightActionQueue;
 
 WiFiClientSecure client;
 UniversalTelegramBot bot(BOTtoken, client);
@@ -203,7 +205,7 @@ void pullFromTasmota(TasmotaState_t& tmState, const String& urlDevice, const Str
   HTTPClient httpDevice;
   httpDevice.begin(urlDevice);
   int httpResponseCode = httpDevice.GET();
-  if (httpResponseCode > 0) {
+  if (httpResponseCode == 200) {
     JsonDocument docDevice;
     DeserializationError error = deserializeJson(docDevice, httpDevice.getString());
     if (error) {
@@ -222,7 +224,7 @@ void pullFromTasmota(TasmotaState_t& tmState, const String& urlDevice, const Str
   HTTPClient httpSensor;
   httpSensor.begin(urlSensors);
   httpResponseCode = httpSensor.GET();
-  if (httpResponseCode > 0) {
+  if (httpResponseCode == 200) {
     JsonDocument docSensor;
     DeserializationError error = deserializeJson(docSensor, httpSensor.getString());
     if (error) {
@@ -349,7 +351,16 @@ void handleNewMessages(int numNewMessages) {
     }
 
     if (text == "/state") {
-      String msg = tp->toList() + "\n" + npkSensor->toList(lastNpkData) + "\n" + aromaToList() + "\n\nExhaustion:\n" + tasmotaToList(lastTasmotaExhaustionState) + "\n\n" + lightToList() + "\n\n" + distanceToList() + "\n\n" + weightToList() + "\n\nauto humidity: " + String(autoHumidityEnabled);
+      String msg;// = tp->toList() + "\n";
+      msg += npkSensor->toList(lastNpkData) + "\n";
+      msg += aromaToList();
+      msg +="\n\nExhaustion:\n";
+      msg += tasmotaToList(lastTasmotaExhaustionState) + "\n\n";
+      msg += lightToList() + "\n\n";
+      msg += distanceToList() + "\n\n";
+      msg += weightToList() + "\n\n";
+      msg += "auto humidity: ";
+      msg += String(autoHumidityEnabled);
       bot.sendMessage(chat_id, msg, "");
     }
 
@@ -409,6 +420,7 @@ void setup() {
   npkSensor = new NPKSensor(1, rxPin, txPin, sensorType);
 
   BLEDevice::init("");
+  BLEDevice::setMTU(517);
   pBLEScan = BLEDevice::getScan();
   tp = new ThermoPro(externalTempHumidAddress);
   scannableBleDevices.push_back(tp);
@@ -452,6 +464,9 @@ void setup() {
     data[length] = '\0';
     memcpy(data, pData, length);
     char* cmdStart = strstr(data, "cmd");
+    if(cmdStart == NULL){
+      cmdStart = strstr(data, "adc");
+    }
     if (cmdStart != NULL) {//no status if timer disabled?
       cmdStart += 4;
       int state, dimmPercentage, dc1, dc2;
@@ -504,24 +519,28 @@ void setup() {
     Serial.println("could not connect to aroma");
   } else {
     Serial.println("connected to aroma");
+    bleClientAroma->setMTU(517);
   }
 
   if (light->connectToDevice() != 0) {
     Serial.println("could not connect to light");
   } else {
     Serial.println("connected to light");
+    bleClientLight->setMTU(517);
   }
-
+  
   if (distance->connectToDevice() != 0) {
     Serial.println("could not connect to distance");
   } else {
     Serial.println("connected to distance");
+    bleClientDistance->setMTU(517);
   }
 
   if (weight->connectToDevice() != 0) {
     Serial.println("could not connect to weight");
   } else {
     Serial.println("connected to weight");
+    bleClientDistance->setMTU(517);
   }
 
   npkSensor->update(lastNpkData);
@@ -538,24 +557,24 @@ void loop() {
       if (!npkSensor->update(lastNpkData)) {
         Serial.println(npkSensor->toJSON(lastNpkData));
       }
-
+      pullFromTasmota(lastTasmotaExhaustionState, externalTasmotaExhaustUrlStatusDevice, externalTasmotaExhaustUrlStatusSensors);
+      pullFromTasmota(lastTasmotaLightState, externalTasmotaLightUrlStatusDevice, externalTasmotaLightUrlStatusSensors);
+      
       int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
 
       while (numNewMessages) {
         handleNewMessages(numNewMessages);
         numNewMessages = bot.getUpdates(bot.last_message_received + 1);
       }
-      pullFromTasmota(lastTasmotaExhaustionState, externalTasmotaExhaustUrlStatusDevice, externalTasmotaExhaustUrlStatusSensors);
-      pullFromTasmota(lastTasmotaLightState, externalTasmotaLightUrlStatusDevice, externalTasmotaLightUrlStatusSensors);
       lastTimeBotRan = millis();
     } else {
       WiFi.begin(ssid, password);
     }
   } else if (millis() - lastBleScan > 30000) {
-    return;
     BLEScanResults foundDevices = pBLEScan->start(scanTime, false);
     pBLEScan->clearResults();
     lastBleScan = millis();
+    Serial.printf("current MTU: %u\r\n", BLEDevice::getMTU());
     if (!aroma->isConnected()) {
       aroma->connectToDevice();
     }
@@ -577,30 +596,44 @@ void loop() {
         Serial.println("could not connect to light");
       } else {
         Serial.println("connected to light");
+        bleClientLight->setMTU(517);
       }
+    }
+    if(light->isConnected()){
+      for (std::function<void()> f : lightActionQueue) {
+        f();
+      }
+      lightActionQueue.clear();
     }
     if (!distance->isConnected()) {
       if (distance->connectToDevice() != 0) {
         Serial.println("could not connect to distance");
       } else {
         Serial.println("connected to distance");
+        bleClientDistance->setMTU(517);
       }
-      if(distance->isConnected()){
-        for (std::function<void()> f : distanceActionQueue) {
-          f();
-        }
-        distanceActionQueue.clear();
+    }
+    if(distance->isConnected()){
+      for (std::function<void()> f : distanceActionQueue) {
+        f();
       }
+      distanceActionQueue.clear();
     }
     if (!weight->isConnected()) {
       if (weight->connectToDevice() != 0) {
         Serial.println("could not connect to weight");
       } else {
         Serial.println("connected to weight");
+        bleClientWeight->setMTU(517);
       }
     }
+    if(weight->isConnected()){
+      for (std::function<void()> f : weightActionQueue) {
+        f();
+      }
+      weightActionQueue.clear();
+    }
   } else if (millis() % 300000 == 0) {
-    return;
     pushToRestServer();
   }
 }
