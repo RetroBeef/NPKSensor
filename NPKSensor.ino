@@ -500,7 +500,7 @@ void setup() {
     Serial.printf("weight(%f)\r\n", weight);
   });
 
-  /*if (aroma->connectToDevice() != 0) {
+  if (aroma->connectToDevice() != 0) {
     Serial.println("could not connect to aroma");
   } else {
     Serial.println("connected to aroma");
@@ -524,7 +524,7 @@ void setup() {
     Serial.println("connected to weight");
   }
 
-  npkSensor->update(lastNpkData);*/
+  npkSensor->update(lastNpkData);
   Serial.flush();
 }
 
@@ -535,9 +535,9 @@ void loop() {
     }
     if (WiFi.status() == WL_CONNECTED) {
       wifiLastSeen = millis();
-      /*if (!npkSensor->update(lastNpkData)) {
+      if (!npkSensor->update(lastNpkData)) {
         Serial.println(npkSensor->toJSON(lastNpkData));
-      }*/
+      }
 
       int numNewMessages = bot.getUpdates(bot.last_message_received + 1);
 
